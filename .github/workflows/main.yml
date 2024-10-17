@@ -1,0 +1,21 @@
+on: [push]
+jobs:
+  build_latex:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install dependencies
+        run: |
+          brew install mactex-no-gui
+          eval "$(/usr/libexec/path_helper)"
+          echo "/Library/TeX/texbin" >> $GITHUB_PATH
+      - name: build latex
+        run: |
+          cd src
+          latexmk --interaction=nonstopmode
+      - name: upload pdf
+        uses: actions/upload-artifact@v3
+        with:
+          name: PDF
+          path: src/build/main.pdf
+

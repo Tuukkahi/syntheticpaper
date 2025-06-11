@@ -1,2 +1,10 @@
 .DS_store
 src/build/
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+main.pdf
+*.synctex.gz

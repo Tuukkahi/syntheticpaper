@@ -20,21 +20,42 @@
 \section{Introduction}
 
 \begin{itemize}
+\item     
+    Satellite data with missing values or incomplete data. Retrospective reconstruction of time series. The task is to make forecasts or complete inclomplete historical data.
+
     \item
         Physics-constrained neural network
     \item
-        Advection-(diffusion) model of dynamical systems
+        Advection-(diffusion) model of dynamical systems.
+
+        Assume simple advection diffusion dynamics. Solved numerically by (semi) Lagrangian schema. (aka warping). Using torch.grid.sample2d with nn interpolation. Some example of "warping".
+
     \item
         Synthetic training data simulation
+
+        Wee need data for training the model. One possibility is to simulate realistic data. The we are not constrained by the amount of training data. But it is not clear  how well these model will perform.
+
     \item
         Dimension independence
     \item
         Short-term prediction
     \item
         Spatio-temporal interpolation
+
+        Interpolation of historical data to construct homogenized time series.
+
     \item
         Dimension reduction Kalman filter for posterior uncertainty
+
+        Efficient algorithms utilizing PyTorch.
+
 \end{itemize}
+
+
+
+
+
+
 
 \section{Materials and methods}
 \subsection{Advection-diffusion model}

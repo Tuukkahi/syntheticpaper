@@ -30,24 +30,37 @@
 
         Assume simple advection diffusion dynamics. Solved numerically by (semi) Lagrangian schema. (aka warping). Using torch.grid.sample2d with nn interpolation. Some example of "warping".
 
+        How about diffusion. Now it is not explicitly in the model. There is evident numerical diffusion, or is there? At least dimension reduction filter smooths the state. Kalman filter has spatially correlated model error that smooths the results, too.
+
+        We do not model diffusion and in the COD example, the clouds do not diffuse(?). However, we might add small diffusion temp to the model in order to hide artefacts coming from numerics(?)
+
     \item
         Synthetic training data simulation
 
-        Wee need data for training the model. One possibility is to simulate realistic data. The we are not constrained by the amount of training data. But it is not clear  how well these model will perform.
+        Wee need data for training the model. One possibility is to simulate realistic data. Then we are not constrained by the amount of training data. But it is not clear  how well these model will perform.
 
     \item
         Dimension independence
+
+        Advection fields are parameterized using 2d polynomial (or splines, etc). This makes the recontruction independent of the domain and discretization.
+
     \item
         Short-term prediction
+
+        A practical application would be short term forecast, i.e., predicting the dynamics of the system a couple of time steps ahead. For the COD example, these could be used to predict solar energy production in the few coming hours. Similar models are used in many meteorological applications, for example short term rain forecasting using weather radar images.
+
     \item
         Spatio-temporal interpolation
 
         Interpolation of historical data to construct homogenized time series.
 
+        
     \item
         Dimension reduction Kalman filter for posterior uncertainty
 
         Efficient algorithms utilizing PyTorch.
+
+    \item Some example using COD data. Maybe some simple "baby" example first?
 
 \end{itemize}
 

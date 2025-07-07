@@ -20,7 +20,7 @@
 \section{Introduction}
 
 \begin{itemize}
-\item     
+\item
     Satellite data with missing values or incomplete data. Retrospective reconstruction of time series. The task is to make forecasts or complete inclomplete historical data.
 
     \item
@@ -54,7 +54,6 @@
 
         Interpolation of historical data to construct homogenized time series.
 
-        
     \item
         Dimension reduction Kalman filter for posterior uncertainty
 
@@ -71,24 +70,51 @@
 
 
 \section{Materials and methods}
-\subsection{Advection-diffusion model}
-Advection-diffusion equation
-\begin{equation}
-    \frac{\partial u}{\partial t} = F \cdot \nabla u + d \Delta u
+\subsection{Advection model}
+Advection equation on the plane
+\begin{equation}\label{eq:adv}
+    \frac{\partial u}{\partial t} = F \cdot \nabla u
 \end{equation}
+$u: \mathbb{R}^2 \times [0, \infty)  \rightarrow \mathbb{R}$, $F: \mathbb{R}^2 \times [0, \infty) \rightarrow \mathbb{R}^2$
+For temporally sparse gridded observations, we employ a semi-Lagrangian scheme to solve the equation numerically.
+The semi-Lagrangian discretized form for the advection equation~\eqref{eq:adv} is
+\begin{equation}
+    \frac{u_h(x, t^{n+1}) - u_h(\tilde{x}, t^n)}{\Delta t} = 0
+\end{equation}
+where $x \in [0, \dots, n_1] \times [0, \dots, n_2]$ is the index set of $u_h$, $\tilde{x}$ the estimated departure index of $u_h(x, t^{n+1})$, and $\Delta t$ the time step.
+For variable vector field $F_h$ of the advection, the index of departure is then given by
+\begin{equation}
+    \tilde{x} = x - F_h(x, t) \Delta t.
+\end{equation}
+The interpolation of the departure index plays a crucial role in the numerical accuracy of the method.
 
-Leads to warping operator?
-
+Because the semi-Lagrangian discretization method is fundamentally a mere re-indexing operation, it is quick to compute even in large scales when $F_h$ is known.
+Moreover, this avoids unwanted numerical diffusion that would otherwise originate from computing the explicit gradients in larger time steps and is therefore, often used in atmospheric modelling~\cite{diamantakis}.
 
 \subsection{Neural network model}
-Neural networks have previously been used to predict pixel-wise values for full vector fields with the training objective being ground-truth vector fields~\cite{ofnn}, or warped images~\cite{debezenac}.
-In high-noise real-world applications where the underlying vector fields are uniform, these methods provide noisy estimates of vector fields and thereby limiting their usefulness.
-Our approach differs from this by parametrising the vector field using a low-dimensional basis, in this case a second degree polynomial
+The semi-Lagrangian scheme provides a fast time integration method for our problem but the vector field is required for the solution.
+Neural networks have previously been used to predict pixel-wise values for full vector fields with the training objective being ground-truth vector fields~\cite{ofnn}, or future images~\cite{debezenac}.
+In high-noise real-world applications where the underlying vector fields can be assumed to take some general form, these methods output noisy estimates of vector fields and thereby limiting their usefulness.
+To rectify this issue, we parametrize the vector field using a low-dimensional basis, in this case the space of second degree polynomials on the plane
 \begin{equation}
-    P_2(x,y) = a_1 + a_2x + a_3y + a_4xy + a_5x^2+a_6y^2.
+    \mathbb{P}_2(\mathbb{R}^2, \mathbb{R}^2) =
+    \left\{
+        \begin{bmatrix}
+            a_1 + a_2x + a_3y + a_4xy + a_5x^2 + a_6y^2\\
+            b_1 + b_2x + b_3y + b_4xy + b_5x^2 + b_6y^2
+        \end{bmatrix} \,
+    \middle| \,
+        a_i, b_i \in \mathbb{R}
+    \right\}
 \end{equation}
+In addition to noise robustness, the basis function parametrization solves a number of typical challenges.
 
-For predicting the vector fields, we use a standard 28-layer convolutional ResNet neural network~\cite{resnet} originally developed for image recognition.
+With the selection of the basis, the complexity of the predicted vector fields can be easily controlled depending on the application.
+The model is also, in principle, dimension independent as the inputs can be interpolated to the resolution at which the model was trained, and the output polynomial can then be evaluated on the original input grid to then use the semi-Lagrangian scheme to do the time integration.
+With the basis function parametrization the vector fields can be represented by only a handful of parameters.
+Thus we can also re-use a standard convolutional image recognition neural network easily as opposed to more complex and resource intensive architectures.
+
+For predicting the vector fields, we use a standard 28-layer convolutional ResNet neural network~\cite{resnet}.
 
 \subsection{Synthetic training data generation scheme}
 In the absence of real-world datasets with ground-truth vector fields, we rely on synthetic training data to train our model.
@@ -102,12 +128,17 @@ The synthetic data for each training sample is generated as follows:
 
         Initially we sample a random $\mathbb{R}^2$ field with the Matérn covariance
         \begin{equation}
-            C_{\nu}(u,v) = \frac{2^{1-\nu}}{\Gamma(\nu)} (\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert)^{\nu} K_{\nu}(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert)
+            C_{\nu}(u,v) = \frac{2^{1-\nu}}{\Gamma(\nu)} \left(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert\right)^{\nu} K_{\nu}\left(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert \right)
         \end{equation}
-        by solving spectrally the Matérn-Whittle stochastic partial differential equation (SPDE)~\cite{whittle63, lindgren}
+        from the Matérn-Whittle stochastic partial differential equation (SPDE)~\cite{whittle63, lindgren}
         \begin{equation}
             (\kappa^2 - \Delta)^{\frac{\alpha}{2}} X(u) = W(u), \quad W \sim \mathcal{N}(0, I).
         \end{equation}
+        Samples can be then drawn by evaluating the inverse Fourier transform
+        \begin{equation}
+            X(u) = \frac{1}{(2 \pi)^2} \int_{\mathbb{R}^2} \frac{e^{-i u \cdot \eta} \hat{W}(\xi)}{\kappa^2 - \Vert \xi \Vert ^{\frac{\alpha}{2}}} \, d \xi
+        \end{equation}
+        for different realisations of white noise.
 
     \item 
         \textbf{Vector Field Sampling}
@@ -130,15 +161,13 @@ The synthetic data for each training sample is generated as follows:
 \subsection{Dimension reduction Kalman filter}
 \cite{solonen}.
 
-\subsection{COD}
-\section{Results}
+\section{Numerical experiments}
+
+\subsection{COD data}
 
 
 \section{Discussion}
 
-
-
-\cite{de2019deep}
 
 \bibliographystyle{plain}
 \bibliography{bibliography}

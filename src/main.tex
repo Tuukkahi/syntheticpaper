@@ -1,7 +1,7 @@
 \documentclass[a4paper,12pt]{article}
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath, amssymb}
-\usepackage{graphicx}
+\usepackage{graphicx, float}
 \usepackage[numbers]{natbib}
 \usepackage{geometry}
 \geometry{margin=1in}
@@ -64,11 +64,6 @@
 \end{itemize}
 
 
-
-
-
-
-
 \section{Materials and methods}
 \subsection{Advection model}
 Advection equation on the plane
@@ -91,11 +86,16 @@ The interpolation of the departure index plays a crucial role in the numerical a
 Because the semi-Lagrangian discretization method is fundamentally a mere re-indexing operation, it is quick to compute even in large scales when $F_h$ is known.
 Moreover, this avoids unwanted numerical diffusion that would otherwise originate from computing the explicit gradients in larger time steps and is therefore, often used in atmospheric modelling~\cite{diamantakis}.
 
-\subsection{Neural network model}
+\subsection{Neural network model}\label{subsec:nnmodel}
 The semi-Lagrangian scheme provides a fast time integration method for our problem but the vector field is required for the solution.
-Neural networks have previously been used to predict pixel-wise values for full vector fields with the training objective being ground-truth vector fields~\cite{ofnn}, or future images~\cite{debezenac}.
-In high-noise real-world applications where the underlying vector fields can be assumed to take some general form, these methods output noisy estimates of vector fields and thereby limiting their usefulness.
-To rectify this issue, we parametrize the vector field using a low-dimensional basis, in this case the space of second degree polynomials on the plane
+Neural networks have previously been used  in similar problems to predict the vector field of motion from a short sequence of images.
+But their objective has been to predict pixel-wise values for full vector fields with the training objective being ground-truth vector fields~\cite{ofnn} from some observational training data, or future images~\cite{debezenac}.
+For high-noise real-world applications, these methods output noisy estimates of vector fields and thereby limiting their usefulness.
+Moreover, in many physical advection applications, like short-term meteorological simulations, the fine grain information of the vector field is not that useful.
+
+Because of this, we have formulated the neural network to recover a low-rank approximation by constraining the solution space to a low-dimensional subspace.
+This allows as to exactly control the complexity of the model by selecting a basis for the vector fields reflecting the expected solution structure. 
+For our use where the expected structure is smooth and uniform, we chose the second degree polymials
 \begin{equation}
     \mathbb{P}_2(\mathbb{R}^2, \mathbb{R}^2) =
     \left\{
@@ -105,14 +105,29 @@ To rectify this issue, we parametrize the vector field using a low-dimensional b
         \end{bmatrix} \,
     \middle| \,
         a_i, b_i \in \mathbb{R}
-    \right\}
+    \right\}.
 \end{equation}
-In addition to noise robustness, the basis function parametrization solves a number of typical challenges.
+The basis allows to us to uniquely represent the polynomial by its values at six interpolation nodes $(x_1, x_2)^{i}$ selected such that the associated Vandermonde matrix
+\begin{equation}
+    V_2 = (p_j((x)^{(i)})) \in \mathbb{R}^{6 \times 6},
+\end{equation}
+is well-conditioned.
+Due to our low-dimensional basis and domain, we can construct a well-conditioned mapping between node values and the global field by geometrically placing one of the interpolation nodes at the origin and five at equally spaced non-symmetric points on the unit circle as depicted in~Figure\ref{fig:nodes}.
+The locations of the nodes give thus a numerically accurate inverse of the associated Vandermonde matrix.
+\begin{figure}[H]
+   \centering
+   \includegraphics[width=0.5\textwidth]{fig/nodes.png}
+   \caption{Polynomial interpolation nodes}\label{fig:nodes}
+\end{figure}
+By formulating the neural network output as a standard polynomial interpolation task, we have constructed an interpretable training objective.
+Instead of directly estimating the sensitive polynomial coefficients, small changes in the node values produce small, predictable changes in the global fields.
+This could then be translated to more balances loss function values and lead to smoother and more stable training of the neural network.
 
-With the selection of the basis, the complexity of the predicted vector fields can be easily controlled depending on the application.
+While the subspace approximation was motivated by noise robustness, the method comes with a number of other useful properties in addition.
+Depending on the desired form of the predicted vector fields, the complexity of the output is easily controlled by the choice of the subspace.
 The model is also, in principle, dimension independent as the inputs can be interpolated to the resolution at which the model was trained, and the output polynomial can then be evaluated on the original input grid to then use the semi-Lagrangian scheme to do the time integration.
-With the basis function parametrization the vector fields can be represented by only a handful of parameters.
-Thus we can also re-use a standard convolutional image recognition neural network easily as opposed to more complex and resource intensive architectures.
+With the basis function parametrization the vector fields can be represented by only a handful of scalars.
+Thus, we can also re-use a standard convolutional image recognition neural network easily as opposed to more complex and resource intensive architectures.
 
 For predicting the vector fields, we use a standard 28-layer convolutional ResNet neural network~\cite{resnet}.
 
@@ -138,14 +153,14 @@ The synthetic data for each training sample is generated as follows:
         \begin{equation}
             X(u) = \frac{1}{(2 \pi)^2} \int_{\mathbb{R}^2} \frac{e^{-i u \cdot \eta} \hat{W}(\xi)}{\kappa^2 - \Vert \xi \Vert ^{\frac{\alpha}{2}}} \, d \xi
         \end{equation}
-        for different realisations of white noise.
+        for different realisations of white noise, which is fast to compute with FFT.
 
     \item 
         \textbf{Vector Field Sampling}
 
         A vector field is generated by sampling an integer magnitude within a specified range for each component of vectors at interpolation nodes.
         This is followed by a random global sign for each component to ensure diversity in all directions.
-        The quadratic polynomial vector field is then solved, as descibed in~\ref{???}.
+        The quadratic polynomial vector field is then solved, as descibed in Section~\ref{subsec:nnmodel}
         These vector fields serves as the training objective for the model.
 
     \item
@@ -158,9 +173,70 @@ The synthetic data for each training sample is generated as follows:
         In addition, at each step additive spatially correlated noise with sampled similarly as the initial field but with a random amplitude drawn between $[\sigma_{\text{min}}, \sigma_{\text{max}}]$.
         This exposes the neural network to a broad range of signal-to-noise ratios to enhances its robustness for real-world data.
 \end{enumerate}
-\subsection{Dimension reduction Kalman filter}
-\cite{solonen}.
+\subsection{Prior-based dimension reduction Kalman filter}
+Here, we present a method to compute optimal state estimates for advective time series data.
+To use indirect, partial, or multiple observation sources with the neural network, and for uncertainty quantification, we employ the Kalman filter.
+Because of large dimensionality of the image data, the standard Kalman filter is computationally prohibitive, and hence we compute the covariance estimates in a reduced dimension.
 
+A general linear Gaussian state space model can be given as
+\begin{align}
+    x_{k} &= M_{k} x_{k-1} + W_{k+1}, \qquad W_{k+1} \sim \mathcal{N}(0, Q_{k+1})\\
+    y_{k} &= H_{k}x_{k} + V_{k}, \qquad V_{k} \sim \mathcal{N}(0, R_{k}).
+\end{align}
+Here $M_{k} \in \mathbb{R}^{d \times d}$ is the state model that maps the state in time, and $H_{k} \in \mathbb{R}^{m \times d}$ the observation model that takes states into observations.
+The observation and state error processes $V_k$, and $W_k$ are assumed additive Gaussians with zero mean.
+
+In our application the state model $M_{k}$ is the semi-Lagrangian operator for which the neural network approximates the vector field from previous states.
+The observation operator $H_{k}$ is to be tailored for the type of observations.
+In our work the observations are direct but partial, and hence is the identity operator for the observed pixels.
+
+In Kalman filtering, one performs two steps: prediction step and update step.
+Prediction step consists of propagating the state vector and covariance to obtain the conditional density
+\begin{equation}
+    \pi(x_{k+1} \, \vert \, y_{1:k}) \sim \mathcal{N}(x_{k+1 \, \vert \, k}, C_{k+1 \vert k}),
+\end{equation}
+by computing the following:
+\begin{align}
+    x_{k \, \vert \, k-1} &= M_{k} x_{k-1 \, \vert \, k-1}\\
+    C_{k \, \vert k-1} &= M_{k} C_{k-1 \, \vert \, k-1} M_{k}^{\top} + Q_{k}.
+\end{align}
+Update step updates the predicted mean and covariance with a new observation to obtain the posterior density
+\begin{equation}
+    \pi(x_{k} \, \vert \, y_{1:k}) \propto \exp\left( -\frac{1}{2} ( \Vert x_{k \, \vert \, k-1} - x_{k} \Vert_{C_{k \, \vert k-1}}^{2} + \Vert y_{k} - H_{k}x_{k} \Vert_{R_{k}}^{2}) \right),
+\end{equation}
+which can be computed using the standard Kalman filter formulas, see e.g.~\cite{kaipiosomersalo}.
+Because these formulas involve inverting the innovation matrix, which is of same shape as the observation's covariance and thus it becomes unfeasible even for small image data.
+
+Hence we use the prior-based dimension reduction technique for devising the Kalman filter formulas following the original paper~\cite{solonen} that extends the standard prior-based dimension reduction for static linear Gaussian inverse problems for the Kalman filter setting.
+First we parameterize the state with a fixed projection matrix $P_r \in \mathbb{R}^{d \times r}$ as
+\begin{equation}
+    x_{k} = x_{k \, \vert \, k-1} + P_r \alpha_k.
+\end{equation}
+With this, the prediction step reads 
+\begin{align}
+    x_{k \, \vert \, k-1} &= M_{k} (x_{k-1} + P_r \alpha_{k-1})\\
+    C_{k \, \vert k-1} &= (M_{k} P_r) \Psi_{k-1} (M_{k} P_r)^{\top} + Q_{k}, \label{eq:C}
+\end{align}
+where $\Psi$ is the covariance of the subspace coordinates $\alpha$.
+This prior then yields the posterior density
+\begin{equation}
+    \pi(\alpha_{k} \, \vert \, y_{1:k}) \propto \exp\left( -\frac{1}{2} ( \Vert P_r \alpha_k \Vert_{C_{k \, \vert k-1}}^{2} + \Vert y_{k} - H_{k}x_{k} H_{k}P_{r}\alpha_{k} \Vert_{R_{k}}^{2} ) \right).
+\end{equation}
+Then the posterior mean and covariance for $\alpha_k$ are given by
+\begin{align}
+    \alpha_{k} &= \Psi_{k} (H_k P_r)^{\top} R_{k}^{-1} (y_k - H_k x_{k \, \vert \, k-1})\\
+    \Psi_{k} &= \left( (H_k P_r)^{\top} R_{k}^{-1} (H_k P_r) + P^{\top} C_{k \, \vert \, k-1}^{-1} P_r\right)^{-1} \label{eq:psi}
+\end{align}
+To evaluate the high-dimensional inverse $C_{k \, \vert \, k-1}^{-1}$ in~\ref{eq:psi}, we introduce a short-hand notation $B_k = M_k P_r A_k \in \mathbb{R}^{d \times r}$ with $A_k$ the matrix square root $\Psi_{k-1} = A_{k} A_{k}^{\top}$, and use~\ref{eq:C} to write
+\begin{equation}
+    C_{k \, \vert \, k-1}^{-1} = \left( (M_{k} P_r) \Psi_{k-1} (M_{k} P_r)^{\top} + Q_{k} \right)^{-1} = (B_k B_{k}^{\top} + Q_k)^{-1},
+\end{equation}
+where $B_k = M_k P_r A_k \in \mathbb{R}^{d \times r}$ with $A_k$ the matrix square root $\Psi_{k-1} = A_{k} A_{k}^{\top}$.
+The Sherman-Morrison-Woodbury inversion formula allows us to turn this into 
+\begin{equation}
+    C_{k \, \vert \, k-1}^{-1} = Q_{k}^{-1} - Q_{k}^{-1} B_k(I + B_{k}^{\top} Q_{k}^{-1} B_{k})^{-1}B_{k}Q_{k}^{-1}.
+\end{equation}
+In filtering, we typically assume that the model error covariance $Q_{k}$ is diagonal, and hence we now need to invert only a $r \times r$ matrix to compute the filter.
 \section{Numerical experiments}
 
 \subsection{COD data}

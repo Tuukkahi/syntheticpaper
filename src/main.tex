@@ -4,6 +4,9 @@
 \usepackage{graphicx, float}
 \usepackage[numbers]{natbib}
 \usepackage{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
 \geometry{margin=1in}
 
 \title{Synthetic data trained neural network}
@@ -20,34 +23,23 @@
 \section{Introduction}
 
 \begin{itemize}
-\item
-    Satellite data with missing values or incomplete data. Retrospective reconstruction of time series. The task is to make forecasts or complete inclomplete historical data.
-
     \item
-        Physics-constrained neural network
+        Satellite data with missing values or incomplete data. Retrospective reconstruction of time series with uncertainty quantification.
+
     \item
         Advection-(diffusion) model of dynamical systems.
 
-        Assume simple advection diffusion dynamics. Solved numerically by (semi) Lagrangian schema. (aka warping). Using torch.grid.sample2d with nn interpolation. Some example of "warping".
-
-        How about diffusion. Now it is not explicitly in the model. There is evident numerical diffusion, or is there? At least dimension reduction filter smooths the state. Kalman filter has spatially correlated model error that smooths the results, too.
-
-        We do not model diffusion and in the COD example, the clouds do not diffuse(?). However, we might add small diffusion temp to the model in order to hide artefacts coming from numerics(?)
+        Assume simple advection diffusion dynamics. Solved numerically by semi-Lagrangian scheme. Using torch.grid.sample2d with nn interpolation. 
 
     \item
         Synthetic training data simulation
 
-        Wee need data for training the model. One possibility is to simulate realistic data. Then we are not constrained by the amount of training data. But it is not clear  how well these model will perform.
+        Wee need data for training the model. One possibility is to simulate realistic data. Then we are not constrained by the amount of training data.
 
     \item
         Dimension independence
 
         Advection fields are parameterized using 2d polynomial (or splines, etc). This makes the recontruction independent of the domain and discretization.
-
-    \item
-        Short-term prediction
-
-        A practical application would be short term forecast, i.e., predicting the dynamics of the system a couple of time steps ahead. For the COD example, these could be used to predict solar energy production in the few coming hours. Similar models are used in many meteorological applications, for example short term rain forecasting using weather radar images.
 
     \item
         Spatio-temporal interpolation
@@ -58,18 +50,16 @@
         Dimension reduction Kalman filter for posterior uncertainty
 
         Efficient algorithms utilizing PyTorch.
-
-    \item Some example using COD data. Maybe some simple "baby" example first?
-
 \end{itemize}
 
 
 \section{Materials and methods}
 \subsection{Advection model}
 Advection equation on the plane
-\begin{equation}\label{eq:adv}
-    \frac{\partial u}{\partial t} = F \cdot \nabla u
-\end{equation}
+\begin{align}\label{eq:adv}
+    \frac{\partial u}{\partial t} &= F \cdot \nabla u\\
+    u(x, 0) &= u_0
+\end{align}
 $u: \mathbb{R}^2 \times [0, \infty)  \rightarrow \mathbb{R}$, $F: \mathbb{R}^2 \times [0, \infty) \rightarrow \mathbb{R}^2$
 For temporally sparse gridded observations, we employ a semi-Lagrangian scheme to solve the equation numerically.
 The semi-Lagrangian discretized form for the advection equation~\eqref{eq:adv} is
@@ -103,7 +93,7 @@ For our use where the expected structure is smooth and uniform, we chose the sec
             a_1 + a_2x + a_3y + a_4xy + a_5x^2 + a_6y^2\\
             b_1 + b_2x + b_3y + b_4xy + b_5x^2 + b_6y^2
         \end{bmatrix} \,
-    \middle| \,
+        \middle| \,
         a_i, b_i \in \mathbb{R}
     \right\}.
 \end{equation}
@@ -115,9 +105,9 @@ is well-conditioned.
 Due to our low-dimensional basis and domain, we can construct a well-conditioned mapping between node values and the global field by geometrically placing one of the interpolation nodes at the origin and five at equally spaced non-symmetric points on the unit circle as depicted in~Figure\ref{fig:nodes}.
 The locations of the nodes give thus a numerically accurate inverse of the associated Vandermonde matrix.
 \begin{figure}[H]
-   \centering
-   \includegraphics[width=0.5\textwidth]{fig/nodes.png}
-   \caption{Polynomial interpolation nodes}\label{fig:nodes}
+    \centering
+    \includegraphics[width=0.5\textwidth]{fig/nodes.png}
+    \caption{Polynomial interpolation nodes}\label{fig:nodes}
 \end{figure}
 By formulating the neural network output as a standard polynomial interpolation task, we have constructed an interpretable training objective.
 Instead of directly estimating the sensitive polynomial coefficients, small changes in the node values produce small, predictable changes in the global fields.
@@ -143,10 +133,10 @@ The synthetic data for each training sample is generated as follows:
 
         Initially we sample a random $\mathbb{R}^2$ field with the Matérn covariance
         \begin{equation}
-            C_{\nu}(u,v) = \frac{2^{1-\nu}}{\Gamma(\nu)} \left(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert\right)^{\nu} K_{\nu}\left(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert \right)
+            \Sigma_{\nu}(u,v) = \frac{2^{1-\nu}}{\Gamma(\nu)} \left(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert\right)^{\nu} K_{\nu}\left(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert \right)
         \end{equation}
         from the Matérn-Whittle stochastic partial differential equation (SPDE)~\cite{whittle63, lindgren}
-        \begin{equation}
+        \begin{equation}\label{eq:maternspde}
             (\kappa^2 - \Delta)^{\frac{\alpha}{2}} X(u) = W(u), \quad W \sim \mathcal{N}(0, I).
         \end{equation}
         Samples can be then drawn by evaluating the inverse Fourier transform
@@ -174,73 +164,204 @@ The synthetic data for each training sample is generated as follows:
         This exposes the neural network to a broad range of signal-to-noise ratios to enhances its robustness for real-world data.
 \end{enumerate}
 \subsection{Prior-based dimension reduction Kalman filter}
-Here, we present a method to compute optimal state estimates for advective time series data.
-To use indirect, partial, or multiple observation sources with the neural network, and for uncertainty quantification, we employ the Kalman filter.
-Because of large dimensionality of the image data, the standard Kalman filter is computationally prohibitive, and hence we compute the covariance estimates in a reduced dimension.
+We seek optimal state estimates and uncertainty quantification for the advective time series with partial and noisy observations.
+To correct the neural network-predicted advection with the incomplete observations, we employ the Kalman filter.
 
-A general linear Gaussian state space model can be given as
+We begin with the general linear Gaussian state space model
 \begin{align}
-    x_{k} &= M_{k} x_{k-1} + W_{k+1}, \qquad W_{k+1} \sim \mathcal{N}(0, Q_{k+1})\\
-    y_{k} &= H_{k}x_{k} + V_{k}, \qquad V_{k} \sim \mathcal{N}(0, R_{k}).
+    x_{k} &= M_{k} x_{k-1} + W_{k}, \qquad W_{k} \sim \mathcal{N}(0, Q_{k})\\
+    y_{k} &= H_{k}x_{k} + V_{k}, \qquad V_{k} \sim \mathcal{N}(0, R_{k}),
 \end{align}
-Here $M_{k} \in \mathbb{R}^{d \times d}$ is the state model that maps the state in time, and $H_{k} \in \mathbb{R}^{m \times d}$ the observation model that takes states into observations.
-The observation and state error processes $V_k$, and $W_k$ are assumed additive Gaussians with zero mean.
+where $M_{k} \in \mathbb{R}^{d \times d}$ is the state evolution operator, and $H_{k} \in \mathbb{R}^{m \times d}$ the observation forward operator.
 
-In our application the state model $M_{k}$ is the semi-Lagrangian operator for which the neural network approximates the vector field from previous states.
-The observation operator $H_{k}$ is to be tailored for the type of observations.
-In our work the observations are direct but partial, and hence is the identity operator for the observed pixels.
+In our application, $M_k$ is the semi-Lagrangian advection operator constructed from the vector field predicted by the neural network.
+The observations are direct but partial, so $H_k$ extracts the observed pixels from the state vector.
 
-In Kalman filtering, one performs two steps: prediction step and update step.
-Prediction step consists of propagating the state vector and covariance to obtain the conditional density
-\begin{equation}
-    \pi(x_{k+1} \, \vert \, y_{1:k}) \sim \mathcal{N}(x_{k+1 \, \vert \, k}, C_{k+1 \vert k}),
-\end{equation}
-by computing the following:
+The Kalman filter recursively computes the Gaussian densities
 \begin{align}
-    x_{k \, \vert \, k-1} &= M_{k} x_{k-1 \, \vert \, k-1}\\
-    C_{k \, \vert k-1} &= M_{k} C_{k-1 \, \vert \, k-1} M_{k}^{\top} + Q_{k}.
+    \pi(x_k \mid y_{1:k-1}) &\propto \exp\!\left( - \tfrac{1}{2} \| x_k - x_{k \mid k-1} \|_{\Sigma_{k \mid k-1}}^2 \right), \label{eq:filterprior} \\
+    \pi(x_k \mid y_{1:k}) &\propto \exp\!\left( - \tfrac{1}{2} \left( \| x_k - x_{k \mid k-1} \|_{\Sigma_{k \mid k-1}}^2 + \| y_k - H_k x_k\|_{R_k}^{2}\right) \right) \label{eq:filterposterior}
 \end{align}
-Update step updates the predicted mean and covariance with a new observation to obtain the posterior density
-\begin{equation}
-    \pi(x_{k} \, \vert \, y_{1:k}) \propto \exp\left( -\frac{1}{2} ( \Vert x_{k \, \vert \, k-1} - x_{k} \Vert_{C_{k \, \vert k-1}}^{2} + \Vert y_{k} - H_{k}x_{k} \Vert_{R_{k}}^{2}) \right),
-\end{equation}
-which can be computed using the standard Kalman filter formulas, see e.g.~\cite{kaipiosomersalo}.
-Because these formulas involve inverting the innovation matrix, which is of same shape as the observation's covariance and thus it becomes unfeasible even for small image data.
+through the prediction and update steps.
+Here we use the precision-weighted Euclidean norm arising from Gaussian densities 
+\[
+    \|z\|_{A}^2 := z^\top A^{-1} z.
+\]
+For the derivation of the formulas, refer, e.g.\ to ~\cite{kaipiosomersalo}.
 
-Hence we use the prior-based dimension reduction technique for devising the Kalman filter formulas following the original paper~\cite{solonen} that extends the standard prior-based dimension reduction for static linear Gaussian inverse problems for the Kalman filter setting.
-First we parameterize the state with a fixed projection matrix $P_r \in \mathbb{R}^{d \times r}$ as
+Because the state dimension $d$ equals the number of image pixels, direct manipulation of the covariance matrices is computationally infeasible.
+We therefore apply the prior-based dimension reduction approach of~\cite{solonen} where the prior-based dimension reduction to static inverse problem is extended for the non-stationary Kalman filter case.
+
+\paragraph{Reduced state parametrization:}
+We introduce a fixed projection matrix $P_r \in \mathbb{R}^{d \times r}$ with $r \ll d$ and parametrize the posterior state estimate as
 \begin{equation}
-    x_{k} = x_{k \, \vert \, k-1} + P_r \alpha_k.
+    x_{k \mid k} = x_{k \mid k-1} + P_r \alpha_{k \mid k}, \label{eq:posteriorparametrization}
 \end{equation}
-With this, the prediction step reads 
+where $\alpha_{k \mid k} \in \mathbb{R}^r$ are coordinates in the reduced subspace and denote its covariance by $\Psi_{k|k} := \operatorname{Cov}(\alpha_{k|k})$.
+We use the conditioning notation
+\begin{equation}
+    x_{k \mid \ell} := \mathbb{E}[x_k \mid y_{1:\ell}],
+    \qquad \Sigma_{k \mid \ell} := \operatorname{Cov}(x_k \mid y_{1:\ell}),
+\end{equation}
+where $\ell$ denotes the time index up to which observations are used for conditioning.
+In particular, $x_{k|k-1}$ denotes the prediction based on observations up to time $k-1$, $x_{k|k}$ the filtered estimate, and $x_{k|T}$ the smoothed estimate.
+The reduced coordinates $\alpha$ inherit the same notation.
+
+Substituting the above parametrization into~\eqref{eq:filterposterior} yields the reduced posterior density
 \begin{align}
-    x_{k \, \vert \, k-1} &= M_{k} (x_{k-1} + P_r \alpha_{k-1})\\
-    C_{k \, \vert k-1} &= (M_{k} P_r) \Psi_{k-1} (M_{k} P_r)^{\top} + Q_{k}, \label{eq:C}
+    \pi(\alpha_{k \mid k} \mid y_{1:k}) &\propto \exp\!\left(- \tfrac{1}{2} \left( \| P_r \alpha_{k \mid k} \|_{\Sigma_{k \mid k-1}}^2 + \| y_k - H_k (x_{k \mid k-1} + P_r \alpha_{k \mid k}) \|_{R_k}^{2}\right) \right). \label{eq:reducedfilterposterior}
 \end{align}
-where $\Psi$ is the covariance of the subspace coordinates $\alpha$.
-This prior then yields the posterior density
-\begin{equation}
-    \pi(\alpha_{k} \, \vert \, y_{1:k}) \propto \exp\left( -\frac{1}{2} ( \Vert P_r \alpha_k \Vert_{C_{k \, \vert k-1}}^{2} + \Vert y_{k} - H_{k}x_{k} H_{k}P_{r}\alpha_{k} \Vert_{R_{k}}^{2} ) \right).
-\end{equation}
-Then the posterior mean and covariance for $\alpha_k$ are given by
+Equivalently, we approximate the full posterior by its restriction to the affine subspace $x_{k \mid k-1} + \operatorname{range}(P_r)$.
+
+\paragraph{Prediction step:}
+The prior state mean and covariance propagate using $M_k$ as
 \begin{align}
-    \alpha_{k} &= \Psi_{k} (H_k P_r)^{\top} R_{k}^{-1} (y_k - H_k x_{k \, \vert \, k-1})\\
-    \Psi_{k} &= \left( (H_k P_r)^{\top} R_{k}^{-1} (H_k P_r) + P^{\top} C_{k \, \vert \, k-1}^{-1} P_r\right)^{-1} \label{eq:psi}
+    x_{k \mid k-1} &= M_{k} x_{k-1 \mid k-1}\\
+    \Sigma_{k \mid k-1} &= (M_{k} P_r) \Psi_{k-1 \mid k-1} (M_{k} P_r)^{\top} + Q_{k},\label{eq:predcov}
 \end{align}
-To evaluate the high-dimensional inverse $C_{k \, \vert \, k-1}^{-1}$ in~\ref{eq:psi}, we introduce a short-hand notation $B_k = M_k P_r A_k \in \mathbb{R}^{d \times r}$ with $A_k$ the matrix square root $\Psi_{k-1} = A_{k} A_{k}^{\top}$, and use~\ref{eq:C} to write
+
+\paragraph{Update step:}
+The Gaussian~\eqref{eq:reducedfilterposterior} can be given by its mean and covariance as
+\begin{align}\label{eq:updatestep}
+    \alpha_{k \mid k} &= \Psi_{k \mid k} (H_k P_r)^{\top} R_{k}^{-1} (y_k - H_k x_{k \mid k-1})\\
+    \Psi_{k \mid k} &= \left( (H_k P_r)^{\top} R_{k}^{-1} (H_k P_r) + P_{r}^{\top} \Sigma_{k \mid k-1}^{-1} P_r\right)^{-1} \label{eq:psiupdate}
+\end{align}
+To evaluate the term $P_{r}^{\top} \Sigma_{k \mid k-1}^{-1} P_r$ efficiently, we apply the Sherman-Morrison-Woodbury identity.
+First, let $A_k$ satisfy $\Psi_{k-1 \mid k-1} = A_{k} A_{k}^{\top}$, by e.g., Cholesky factorization, and define
 \begin{equation}
-    C_{k \, \vert \, k-1}^{-1} = \left( (M_{k} P_r) \Psi_{k-1} (M_{k} P_r)^{\top} + Q_{k} \right)^{-1} = (B_k B_{k}^{\top} + Q_k)^{-1},
+    B_k := M_k P_r A_k.
 \end{equation}
-where $B_k = M_k P_r A_k \in \mathbb{R}^{d \times r}$ with $A_k$ the matrix square root $\Psi_{k-1} = A_{k} A_{k}^{\top}$.
-The Sherman-Morrison-Woodbury inversion formula allows us to turn this into 
+Then from~\eqref{eq:predcov},
 \begin{equation}
-    C_{k \, \vert \, k-1}^{-1} = Q_{k}^{-1} - Q_{k}^{-1} B_k(I + B_{k}^{\top} Q_{k}^{-1} B_{k})^{-1}B_{k}Q_{k}^{-1}.
+    \Sigma_{k \mid k-1}^{-1} = (B_k B_k^{\top} + Q_k)^{-1},
 \end{equation}
-In filtering, we typically assume that the model error covariance $Q_{k}$ is diagonal, and hence we now need to invert only a $r \times r$ matrix to compute the filter.
+and
+\begin{equation}
+    \Sigma_{k \mid k-1}^{-1} = Q_{k}^{-1}
+    - Q_{k}^{-1} B_k
+    (I + B_{k}^{\top} Q_{k}^{-1} B_k)^{-1}
+    B_{k}^{\top} Q_{k}^{-1},
+\end{equation}
+so only an $r \times r$ dimensional system must be inverted.
+In filtering we typically assume $R_k$ and $Q_k$ are either diagonal or their inverses are known a priori and hence we can now compute the entire forward recursion of the filter with inversions only in the reduced subspace.
+
+In the code implementation, we return the reduced posterior precision in Cholesky form
+\begin{equation}
+    \Psi_{k \mid k}^{-1} = L_k L_{k}^{\top},
+\end{equation}
+due to numerical stability and the subsequent RTS smoother recursion.
+
+\paragraph{Recovery of pointwise uncertainty.}
+Although the full $d \times d$ dimensional covariance matrix of the state need not, and often can't, be formed explicitly, we can recover the pointwise posterior variances from the reduced forms.
+
+The parametrization~\eqref{eq:posteriorparametrization} would produce the full state covariance
+\begin{equation}
+    \Sigma_{k \mid k} = P_r \Psi_{k \mid k} P_{r}^{\top},
+\end{equation}
+or the pointwise variances
+\begin{equation}
+    \operatorname{diag}(\Sigma_{k \mid k}) = \sum_{j=1}^{r} (P_r \Psi_{k \mid k}^{1/2})_{:, j}^{2},
+\end{equation}
+and equivalently through a triangular solve in the precision Cholesky factor case without explicitly inverting $\Psi_{k \mid k}$.
+This allows efficient recovery of pointwise uncertainty fields in the original state dimension.
+
+\paragraph{Choice of the reduced subspace.}
+The reduced subspace projection $P_r$ controls both the accuracy and computational cost of the filter.
+With $P_r= I_{d \times d}$, we would recover the standard full Kalman filter from the above equations.
+Unlike in the static setting where $P_r$ would typically contain the $r$ leading singular vectors of the prior covariance, we typically want to avoid updating the reduced subspace at each step in order not to suppress directions important at a future time as discussed in~\cite{solonen}.
+
+Previously, $P_r$ has been calculated e.g.\ by leading singular vectors of an a priori chosen covariance matrix~\cite{xraykfdr} and from spline bases~\cite{opticalflowkfdr}.
+Given that our data exhibit large homogeneous domains punctuated by localized regions of large variation, wavelets provide a natural subspace for the dimension reduction.
+Different wavelet families induce different approximation errors and artifact structures.
+For our application, the Daubechies family~\cite{daubechies} offers a practical compromise between smoothness and spatial localization.
+The projection matrix $P_r$ is formed by a truncated wavelet expansion to a prescribed number of levels.  
+To enforce orthonormality of the projection when the dimension of the state doesn't coincide with a power of 2, we orthonormalize $P_r$ by a $QR$ factorization.
+
+\subsection{Dimension reduction RTS smoother}
+The fixed-interval Rauch-Tung-Striebel (RTS) smoother gives the algorithm to compute the state densities conditioned by both past and future observations
+\begin{equation}
+    \pi(x_{k} \mid y_{1:T}).
+\end{equation}
+For the derivation of the standard backward recursion RTS equations, we refer to any standard textbook, e.g.~\cite{sarkka}.
+
+We express the smoothed state in the same reduced parametrization
+\begin{equation}
+    x_{k \mid T} = x_{k \mid k} + P_r \alpha_{k \mid T}.
+\end{equation}
+
+Using the stored Cholesky factors $\Psi_{k}^{-1} = L_k L_{k}^{\top}$ and state evolution operators $M_k$ from the forward pass, we define the whitened reduced state transition
+\begin{equation}
+    C_{k} := M_k P_r L_{k}^{-\top}.
+\end{equation}
+
+The reduced smoother gain becomes
+\begin{equation}
+    K_{k}^{s} = L_{k}^{\top}C_{k}^{\top} Q_{k}^{-1} - L_{k}^{\top} C_{k}^{\top} Q_{k}^{-1} C_{k} (I + C_{k}^{\top} Q_{k}^{-1} C_{k})^{-1} C_{k}^{\top} Q_{k}^{-1} \, \in \mathbb{R}^{r \times d},
+\end{equation}
+where we again need to do matrix inversion in $r \times r$ dimensions.
+
+The backward recursion is then
+\begin{align}
+    \alpha_{k \mid T} &= K_{k}^{s}(x_{k+1 \mid T} - M_k x_{k \mid k})\\
+    \Psi_{k \mid T} &= \Psi_{k \mid k} + (K_{k}^{s} P_r) (\Psi_{k+1 \mid T} - \Psi_{k+1 \mid k}) (K_{k}^{s} P_r)^{\top}.
+\end{align}
+Similarly to the forward recursion, the standard RTS smoother is recovered with $P_r=I_{d \times d}$
+
+\begin{algorithm}
+\caption{Reduced Kalman filter with neural network advection and optional RTS smoothing}
+\begin{algorithmic}[1]
+\Require Initial states $x_{-2},x_{-1},x_0$, projection $P_r$, initial $\Psi_{0|0}$, noise covariances $Q_k,R_k$, observations $y_{1:T}$
+\State Initialize $x_{0|0}$ and factorize $\Psi_{0|0}^{-1} = L_0 L_0^\top$
+\For{$k=1$ to $T$}
+    \State $M_k \gets NN(x_{k-2:k-1|k-1})$
+    \State Predict $x_{k|k-1} \gets M_k x_{k-1|k-1}$
+    \State Form $\Sigma_{k|k-1} = (M_k P_r)\Psi_{k-1|k-1}(M_k P_r)^\top + Q_k$
+    \State Compute $\Psi_{k|k}$ and $\alpha_{k|k}$ using~\eqref{eq:psiupdate} with SMW for $\Sigma_{k|k-1}^{-1}$
+    \State Update $x_{k|k} \gets x_{k|k-1} + P_r \alpha_{k|k}$
+    \State Store $x_{k|k}$ and $L_k$ such that $\Psi_{k|k}^{-1}=L_k L_k^\top$
+\EndFor
+\If{RTS smoothing is used}
+    \For{$k=T-1$ down to $0$}
+        \State Compute $C_k \gets M_{k+1} P_r L_k^{-\top}$
+        \State Compute smoother gain $K_k^s$ and update $(\alpha_{k|T},\Psi_{k|T})$
+        \State $x_{k|T} \gets x_{k|k} + P_r \alpha_{k|T}$
+    \EndFor
+\EndIf
+\end{algorithmic}
+\end{algorithm}
 \section{Numerical experiments}
+The neural network is implemented in PyTorch and trained on CSC Mahti HPC using a single compute node with 4 NVIDIA A100 40GB GPUs.
+
+The Kalman filter is implemented in PyTorch to take advantage of GPU computing which leads to orders of magnitude reduction in wall clock time of filtering.
+Using a single NVIDIA A100 40GB GPU, computing the prediction and update step takes 0.6 seconds in single precision, and 0.3 seconds in double precision with 2048 basis vectors and $256 \times 256$ dimensional state, and observation vectors without accounting for the time taken for observation forward model, and state model.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{fig/basis.png}
+    \caption{TODO: What is the appropriate comparison measure? Here $100 \times 100$ comparison example to a full filter.}
+\end{figure}
+
+Figure~\ref{fig:example1} depicts a simple, synthetic example of the model's capability of producing state estimates over the entire domain of interest even when a significant portion of the observations are missing.
+The shape and size of the example images are outside of the neural network's internal trained resolution, thus demonstrating our ability to adapt to new domain sizes without re-training the neural network model. 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{fig/frames/stack_123.png}
+    \caption{A minimal synthetic example to demonstrate the neural network's capability for inference for data whose domain of shape $198 \times 111$ is not the same as the training dataset of $256 \times 256$.
+    A minimal synthetic example of the model. The three rows show the output from the Kalman smoother at three timesteps. The first column images are the synthetic noisy observations with a vertical bar of missing values. The second and third column are the posterior from the Kalman smoother and its covariance. The size of the domain of this example $198 \times 111$ falls outside of the neural network's training dataset $256 \times 256$ but it is still able to correctly estimate the vector fields that are shown over the filtered images. See the respective animation in attachments.}\label{fig:example1}
+\end{figure}
 
 \subsection{COD data}
+To demonstrate our model in a real-world application, we use it with cloud optical thickness data.
+As our observation source we use cloud optical thickness from the NWC/GEO postprocessing tool calculated using observed (MSG-3/SEVIRI) and simulated reflectances on 0.6 $\mu m$ and $1.6\mu m$ wavelengths.
 
+Figure~\ref{fig:examplecot} shows an example of the filtered COT data and shows how we use the neural network produced dynamical model to fill in the missing observations and also use the Kalman filter to estimate the uncertainties therein.
+The eff
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1.0\textwidth]{fig/stacked.png}
+    \caption{An example of the filtered COT data in the neural networks's original $256 \times 256$ resolution. The leftmost column shows the observation data, the middle column the filtered data overlayed by the estimated vector field, and the rightmost column the standard deviation from the Kalman filter.}\label{fig:examplecot}
+\end{figure}
 
 \section{Discussion}
 

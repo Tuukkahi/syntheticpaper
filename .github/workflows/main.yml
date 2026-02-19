@@ -12,7 +12,7 @@ jobs:
       - name: build latex
         run: |
           cd src
-          latexmk --interaction=nonstopmode
+          latexmk -f --interaction=nonstopmode
       - name: upload pdf
         uses: actions/upload-artifact@v6
         with:

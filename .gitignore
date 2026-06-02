@@ -6,5 +6,7 @@ src/build/
 *.fdb_latexmk
 *.fls
 *.log
+*.bcf
+*.run.xml
 main.pdf
 *.synctex.gz

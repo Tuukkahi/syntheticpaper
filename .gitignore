@@ -9,4 +9,4 @@ src/build/
 *.bcf
 *.run.xml
 main.pdf
-*.synctex.gz
+*.synctex.gz*

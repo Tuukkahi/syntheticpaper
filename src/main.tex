@@ -1,6 +1,7 @@
 \documentclass[a4paper,12pt]{article}
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath, amssymb}
+\usepackage{amsthm}
 \usepackage{graphicx, float}
 \usepackage{geometry}
 \usepackage[T1]{fontenc}
@@ -9,7 +10,10 @@
 \geometry{margin=1in}
 \usepackage[backend=biber,style=numeric]{biblatex}
 \addbibresource{bibliography.bib}
-
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
 \title{Title}
 \author{}
 \date{\today}
@@ -57,6 +61,7 @@ We assume a linear observation model
     y_k = H_k x_k + v_k, \quad v_k \sim \mathcal{N}(0, R_k),
 \end{equation}
 where $H_k$ extracts observed components of the state.
+
 
 The state evolution is governed by a transport dominated dynamical model, which we approximate using an advection operator parametrized by a neural network that can be written as a linear state model
 \begin{equation}
@@ -142,7 +147,7 @@ We choose the interpolation nodes such that the associated Vandermonde matrix
 is well conditioned, where $p_j$ denote the scalar quadratic monomials.
 Because of the low dimensionality of the problem, the placing of the interpolation nodes can be done geometrically by setting one node at the origin and five at equally spaced non-symmetric points on the unit circle.
 
-Predicting the nodal values instead of the basis coefficients improves the numerical scaling of the target, because a small changes in the nodal values correspond to controlled and small changes in the resulting advection field.
+Predicting the nodal values instead of the basis coefficients improves the numerical scaling of the target, because a small change in the nodal values correspond to controlled and small changes in the resulting advection field.
 
 The parametrization is independent of the grid resolution.
 The images can be resized to the required input resolution, while the predicted polynomial field can be evaluated for the original grid.
@@ -152,14 +157,15 @@ For predicting the scalar components, we use a 28-layer ResNet neural network~\c
 For each input sequence, the network produces the six nodal values and the full two-component field is obtained by rotating the input sequence as described above.
 
 \subsection{Synthetic training data generation scheme}
-Because real-world satellite datasets do not have ground-truth advection fields, we train the neural network with synthetic training data.
+Because real-world satellite datasets do not have ground-truth advection fields for supervised learning, we train the neural network with synthetic training data.
 By simulating data with a wide range of spatial structures, noise levels, and flow patterns, we aim at training a model that generalizes beyond a specific data source.
 Each synthetic sample is generated on demand during training, eliminating need for large dataset storage and providing a virtually unlimited supply of training data.
 
 Each synthetic sample consists of an image sequence and a target advection field used as the training target.
 The advection field is quadratic, while the image sequence is generated with additional time-dependent perturbations and observation-like artifacts.
-Thereby the network is trained to recover the dominant low-dimensional transport from noisy data possibly not generated exactly by quadratic advection.
+Thereby the network is trained to recover the dominant low-dimensional transport from general image sequences in the presence of noise and modelling discrepancies.
 
+<<<<<<< Updated upstream
 \begin{enumerate}
     \item
         \textbf{Initial Field Sampling}
@@ -227,40 +233,118 @@ We therefore apply the prior-based dimension reduction approach of~\cite{solonen
 
 \paragraph{Reduced state parametrization:}
 We introduce a fixed projection matrix $P_r \in \mathbb{R}^{d \times r}$ with $r \ll d$ and parametrize the posterior state estimate as
+We use Matérn fields as generic random scalar fields as initial conditions.
+The Matérn covariance function between two points $u$ and $v$ is
 \begin{equation}
-    x_{k \mid k} = x_{k \mid k-1} + P_r \alpha_{k \mid k}, \label{eq:posteriorparametrization}
+    \Sigma_{\nu}(u,v)
+    = \sigma^2 \frac{2^{1-\nu}}{\Gamma(\nu)}
+    \left(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert\right)^{\nu}
+    K_{\nu}
+    \left(\frac{\sqrt{2\nu}}{\ell} \lVert u - v \rVert \right),
 \end{equation}
-where $\alpha_{k \mid k} \in \mathbb{R}^r$ are coordinates in the reduced subspace and denote its covariance by $\Psi_{k|k} := \operatorname{Cov}(\alpha_{k|k})$.
-We use the conditioning notation
+where $\nu$, $\ell$, and $\sigma^2$ are the smoothness, correlation length, and the marginal variance parameters, respectively.
+$K_{\nu}$ is the modified Bessel function of the second kind.
+Equivalently, Matérn fields are characterized by the Matérn-Whittle SPDE~\cite{whittle63,lindgren}
+\begin{equation}\label{eq:maternspde}
+    (\kappa^2 - \Delta)^{\frac{\alpha}{2}} X = W,
+\end{equation}
+where $W$ is Gaussian white noise on $\mathbb{R}^d$, and $X$ has Matérn covariance with parameters $\alpha := \nu + d/2$, and $\kappa := \sqrt{2 \nu}/\ell$.
+On the two-dimensional regular grids used here, samples are generated spectrally by evaluating the inverse FFT of
+\begin{equation}
+    c_\sigma \left( \kappa^2 + \Vert \xi_m \Vert^2 \right)^{-\alpha/2} \widehat{W}(\xi_m),
+\end{equation}
+for realizations of discrete Fourier transformed white noise $\widehat{W}$, where $\xi_m$ are the discrete fourier frequencies, and $c_\sigma$ is set so that the generated field has a marginal variance of $\sigma^2$.
+
+The base advection field is produced by sampling two-dimensional nodal values on the interpolation nodes which is then mapped to polynomial coefficients.
+The image sequence is then produced by recursively applying the semi-Lagrangian update to the base advection perturbed by spatially correlated Matérn random fields to simulate noise and modelling discrepancy.
+The supervised training target, however, remains the unperturbed base field.
+
+After applying advection, the frames are cropped to the model's internal resolution, scaled to $[0,1]$, thresholded with a random threshold to create sparse zero-valued regions, and augmented with a small number of stationary localized Gaussian artifacts.
+These transformations expose the network to general sparsity and non-advective behaviour commonly seen in satellite datasets.
+
+The training loss is evaluated on the full-grid polynomial advection fields.
+For predicted $\widehat{F}$ and target $F$ fields, we use
+\begin{equation}
+    \mathcal{L}(\widehat{F}, F) = \operatorname{MSE}(\widehat{F}, F) + \frac{1}{2} \operatorname{mean} \left| \Vert \widehat{F} \Vert_2 - \Vert F \Vert_2 \right|,
+\end{equation}
+where the norms in the second term are pointwise Euclidean norms of the advection field and the mean is taken over the grid points.
+
+\subsection{Prior-based dimension reduction Kalman filter}
+At each time step the filtering problem is a linear Gaussian inverse problem with a dynamically propagated prior density.
+The relevant conditional densities are the prediction prior, the filtering posterior, and the fixed-interval smoothing posterior.
+Given observations up to time $k-1$, the prediction prior density is
+\begin{align}
+    \pi(x_k \mid y_{1:k-1}) &= \mathcal{N}(x_{k \mid k-1}, \Sigma_{k \mid k-1}) \\
+    &\propto \exp\!\left( - \tfrac{1}{2} \| x_k - x_{k \mid k-1} \|_{\Sigma_{k \mid k-1}}^2 \right).\label{eq:filterprior}
+\end{align}
+Throughout this section,
+\begin{equation}
+    \|z\|_{A}^2 := z^\top A^{-1} z,
+\end{equation}
+denotes the covariance-weighted quadratic form.
+We also use the conditioning notation
 \begin{equation}
     x_{k \mid \ell} := \mathbb{E}[x_k \mid y_{1:\ell}],
     \qquad \Sigma_{k \mid \ell} := \operatorname{Cov}(x_k \mid y_{1:\ell}),
 \end{equation}
 where $\ell$ denotes the time index up to which observations are used for conditioning.
-In particular, $x_{k|k-1}$ denotes the prediction based on observations up to time $k-1$, $x_{k|k}$ the filtered estimate, and $x_{k|T}$ the smoothed estimate.
-The reduced coordinates $\alpha$ inherit the same notation.
-
-Substituting the above parametrization into~\eqref{eq:filterposterior} yields the reduced posterior density
+After assimilating the observation $y_k$ under the likelihood $\pi(y_k \mid x_k) \propto \exp(- \tfrac{1}{2} \| y_k - H_k x_k\|_{R_k}^{2})$, the filtering posterior is
 \begin{align}
-    \pi(\alpha_{k \mid k} \mid y_{1:k}) &\propto \exp\!\left(- \tfrac{1}{2} \left( \| P_r \alpha_{k \mid k} \|_{\Sigma_{k \mid k-1}}^2 + \| y_k - H_k (x_{k \mid k-1} + P_r \alpha_{k \mid k}) \|_{R_k}^{2}\right) \right). \label{eq:reducedfilterposterior}
+    \pi(x_k \mid y_{1:k}) &= \mathcal{N}(x_{k \mid k}, \Sigma_{k \mid k}) \\
+                          &\propto \exp\!\left( - \tfrac{1}{2} \left( \| x_k - x_{k \mid k-1} \|_{\Sigma_{k \mid k-1}}^2 + \| y_k - H_k x_k\|_{R_k}^{2}\right) \right).\label{eq:filterposterior}
 \end{align}
-Equivalently, we approximate the full posterior by its restriction to the affine subspace $x_{k \mid k-1} + \mathcal{R}(P_r)$.
+Finally, the fixed-interval smoothing posterior is
+\begin{equation}
+    \pi(x_k \mid y_{1:T}) = \mathcal{N}(x_{k \mid T}, \Sigma_{k \mid T}).
+\end{equation}
+For the full Kalman prediction and update step formulas and the fixed-interval Rauch-Tung-Striebel smoother, see, e.g.,~\cite{kaipiosomersalo,sarkka}.
+A direct application of the Kalman filter is infeasible even for moderately sized images because the state dimension $d$ equals the number of image pixels and its covariance is a dense $d \times d$ matrix.
+Therefore, we apply the prior-based dimension reduction approach of~\cite{solonen}, which extends prior-based dimension reduction for static inverse problems to the non-stationary Kalman filter case.
+The key idea is to represent the filtering covariance in a fixed low-dimensional subspace while keeping the state mean in the full state space.
+
+\paragraph{Reduced state parametrization:}
+Let $P_r \in \mathbb{R}^{d \times r}$ be a fixed reduced basis matrix with $r \ll d$.
+We restrict the filter update increment to $\mathcal{R}(P_r)$ by writing
+\begin{equation}
+    x_{k} = x_{k \mid k-1} + P_r \alpha_{k}, \quad \alpha_{k} \in \mathbb{R}^r.\label{eq:posteriorparametrization}
+\end{equation}
+Substituting~\eqref{eq:posteriorparametrization} into~\eqref{eq:filterposterior} gives the reduced posterior density
+\begin{equation}
+    \pi(\alpha_{k} \mid y_{1:k})
+    \propto \exp\!\left(- \tfrac{1}{2} \left(
+    \| P_r \alpha_{k} \|_{\Sigma_{k \mid k-1}}^2
+    + \| y_k - H_k (x_{k \mid k-1} + P_r \alpha_{k}) \|_{R_k}^{2}
+    \right) \right). \label{eq:reducedfilterposterior}
+\end{equation}
+We denote the mean and covariance of the reduced coordinate random variable $\alpha_k$ by
+\begin{equation}
+    \alpha_{k \mid k} := \mathbb{E}[\alpha_k \mid y_{1:k}], \qquad
+    \Psi_{k|k} := \operatorname{Cov}(\alpha_k \mid y_{1:k}).
+\end{equation}
+The corresponding full-state posterior mean approximation is
+\begin{equation}
+    x_{k \mid k}^{(r)} = x_{k \mid k-1} + P_r \alpha_{k \mid k}.
+\end{equation}
 
 \paragraph{Prediction step:}
-The prior state mean and covariance propagate using $M_k$ as
+The prior state mean and covariance representation propagate using $M_k$ as
 \begin{align}
-    x_{k \mid k-1} &= M_{k} x_{k-1 \mid k-1}\\
+    x_{k \mid k-1} &= M_{k} x_{k-1 \mid k-1},\\
     \Sigma_{k \mid k-1} &= (M_{k} P_r) \Psi_{k-1 \mid k-1} (M_{k} P_r)^{\top} + Q_{k},\label{eq:predcov}
 \end{align}
 
 \paragraph{Update step:}
-The Gaussian~\eqref{eq:reducedfilterposterior} can be given by its mean and covariance as
+The Gaussian~\eqref{eq:reducedfilterposterior} has posterior mean and reduced covariance
 \begin{align}\label{eq:updatestep}
-    \alpha_{k \mid k} &= \Psi_{k \mid k} (H_k P_r)^{\top} R_{k}^{-1} (y_k - H_k x_{k \mid k-1})\\
-    \Psi_{k \mid k} &= \left( (H_k P_r)^{\top} R_{k}^{-1} (H_k P_r) + P_{r}^{\top} \Sigma_{k \mid k-1}^{-1} P_r\right)^{-1} \label{eq:psiupdate}
+    \alpha_{k \mid k} &= \Psi_{k \mid k} (H_k P_r)^{\top}
+                         R_{k}^{-1} (y_k - H_k x_{k \mid k-1}),\\
+    \Psi_{k \mid k}   &= \left(
+                            (H_k P_r)^{\top} R_{k}^{-1} (H_k P_r)
+                            + P_{r}^{\top} \Sigma_{k \mid k-1}^{-1} P_r
+                         \right)^{-1}\label{eq:psiupdate}
 \end{align}
 To evaluate the term $P_{r}^{\top} \Sigma_{k \mid k-1}^{-1} P_r$ efficiently, we apply the Sherman-Morrison-Woodbury identity.
-First, let $A_k$ satisfy $\Psi_{k-1 \mid k-1} = A_{k} A_{k}^{\top}$, by e.g., Cholesky factorization, and define
+Let $A_k$ be a square root of $\Psi_{k-1 \mid k-1}$, for example its Cholesky factor, so that $\Psi_{k-1 \mid k-1} = A_{k} A_{k}^{\top}$, and define
 \begin{equation}
     B_k := M_k P_r A_k.
 \end{equation}
@@ -273,99 +357,315 @@ and
     \Sigma_{k \mid k-1}^{-1} = Q_{k}^{-1}
     - Q_{k}^{-1} B_k
     (I + B_{k}^{\top} Q_{k}^{-1} B_k)^{-1}
-    B_{k}^{\top} Q_{k}^{-1},
+    B_{k}^{\top} Q_{k}^{-1}.
 \end{equation}
-so only an $r \times r$ dimensional system must be inverted.
-In filtering we typically assume $R_k$ and $Q_k$ are either diagonal or their inverses are known a priori and hence we can now compute the entire forward recursion of the filter with inversions only in the reduced subspace.
+Thus, the inverse action of $\Sigma_{k \mid k-1}$ can be evaluated by applying $Q_{k}^{-1}$ and solving an $r \times r$ system.
+When the precision actions of $R_k$ and $Q_k$ are available, the explicit inversions required are reduced from $d \times d$ to $r \times r$ systems.
 
-In the code implementation, we return the reduced posterior precision in Cholesky form
+In the implementation, we return the reduced posterior precision in Cholesky form
 \begin{equation}
     \Psi_{k \mid k}^{-1} = L_k L_{k}^{\top},
 \end{equation}
 due to numerical stability and the subsequent RTS smoother recursion.
 
 \paragraph{Recovery of pointwise uncertainty.}
-Although the full $d \times d$ dimensional covariance matrix of the state need not, and often can't, be formed explicitly, we can recover the pointwise posterior variances from the reduced forms.
-
-The parametrization~\eqref{eq:posteriorparametrization} produces the projected reduced covariance in the state space
+$\Psi_{k \mid k}$ is the covariance of the reduced coordinate random variable $\alpha_k$.
+The corresponding covariance contribution in the state space is
 \begin{equation}
-    \Sigma_{k \mid k}^{(r)} = P_r \Psi_{k \mid k} P_{r}^{\top},
+    \Sigma_{k \mid k}^{(r)} = P_r \Psi_{k \mid k} P_{r}^{\top}.
 \end{equation}
-or the pointwise variances
+Although this $d \times d$ matrix may be infeasible to form, its diagonal can be recovered as
 \begin{equation}
-    \operatorname{diag}(\Sigma_{k \mid k}^{(r)}) = \sum_{j=1}^{r} (P_r \Psi_{k \mid k}^{1/2})_{:, j}^{2},
+    \operatorname{diag}(\Sigma_{k \mid k}^{(r)})
+    = \sum_{j=1}^{r} (P_r \Psi_{k \mid k}^{1/2})_{:, j}^{2},
 \end{equation}
-and equivalently through a triangular solve in the precision Cholesky factor case without explicitly inverting $\Psi_{k \mid k}$.
-This allows efficient recovery of pointwise uncertainty fields in the original state dimension.
+where the square is taken componentwise.
+In the implementation, the diagonal is computed by triangular solves with the precision Cholesky factor, avoiding explicit inversion of $\Psi_{k \mid k}$ and formation of $\Sigma_{k \mid k}^{(r)}$.
+This gives an efficient way to compute approximate pointwise variance fields in the original state dimension.
 
 \paragraph{Choice of the reduced subspace.}
-The reduced subspace projection $P_r$ controls both the accuracy and computational cost of the filter.
-With $P_r= I_{d \times d}$, we would recover the standard full Kalman filter from the above equations.
-Unlike in the static setting where $P_r$ would typically contain the $r$ leading singular vectors of the prior covariance, we typically want to avoid updating the reduced subspace at each step in order not to suppress directions important at a future time as discussed in~\cite{solonen}.
+The reduced subspace basis $P_r$ controls both the accuracy and computational cost of the filter.
+If $r=d$ and $P_r=I$, the above equations reduce to the standard full Kalman filter.
+A natural choice would be to update $P_r$ from the leading eigenvectors of the current prior covariance.
+In the filtering setting, however, this may suppress directions that become important later, as discussed in~\cite{solonen}.
 
-Previously, $P_r$ has been calculated e.g.\ by leading singular vectors of an a priori chosen covariance matrix~\cite{xraykfdr} and from spline bases~\cite{opticalflowkfdr}.
-Given that we assume the model error process covariance $Q_k$ admits a Matérn structure, we use the analytical truncated eigenvectors of the Matérn-Whittle SPDE~\eqref{eq:maternspde}.
-In addition to improve numerical conditioning of the algorithm, the eigenvectors are normalized.
+In earlier applications of the prior-based reduced Kalman formulation, the reduced subspace basis has been constructed for example from leading singular vectors of an a priori chosen covariance matrix~\cite{xraykfdr} or from spline basis functions~\cite{opticalflowkfdr}.
+Here, we choose $P_r$ from the leading eigenvectors of the model error covariance.
+This basis choice connects the reduced filter error directly to the spectral tail of $Q_k$ in the one-step approximation bound below.
+For the Matérn covariance model we use in our experiments, this tail has an explicit algebraic decay rate.
+The basis vectors are scaled to unit norm to improve numerical conditioning.
 
 \paragraph{Expected approximation error.}
-Fix prediction state $x_{k \mid k-1} \in \mathbb{R}^n$ and covariance $\Sigma_{k \mid k-1}  \in \mathbb{R}^{n \times n}$.
+For $A \in \mathbb{R}^{d \times d}$, let
+\begin{equation}
+    \Vert A \Vert_{*} := \operatorname{tr}\left( (A^{\top} A)^{1/2} \right)
+\end{equation}
+denote the trace norm.
+\begin{proposition}[One-step dimension reduction update expected error]\label{prop:onestep}
+    Suppose that $Q_k \succ 0$ and let the orthonormal columns of $P_r$ span its $r$ leading eigenvectors.
+    Denote the eigenvalues of $Q_k$ by $q_{k,1} \geq \cdots \geq q_{k,d}$, and define
+    \begin{equation}
+        C_k := \kappa(\Sigma_{k \mid k}^{-1}), \qquad
+        \beta_k := \lambda_{\max}(Q_{k}^{-1/2} \Sigma_{k\mid k-1} Q_{k}^{-1/2}).
+    \end{equation}
+    Then the filter posterior mean and covariance satisfy
+    \begin{equation}
+        \mathbb{E} \Vert x_{k \mid k} - x_{k \mid k}^{(r)} \Vert_{2}^{2} \leq C_k \beta_k \sum_{j > r} q_{k,j}, \qquad
+        \Vert \Sigma_{k \mid k} - \Sigma_{k \mid k}^{(r)} \Vert_{*} \leq  C_k \beta_k \sum_{j > r} q_{k,j}.
+    \end{equation}
+    Moreover, for a two-dimensional Matérn covariance with smoothness $\nu$, there is a constant $\gamma_k > 0$, independent of $r$, such that
+    \begin{equation}
+        \sum_{j > r} q_{k,j} \leq \gamma_k r^{-\nu}.
+    \end{equation}
+    Consequently, both errors are bounded by $C_k \beta_k \gamma_k r^{-\nu}$.
+\end{proposition}
 
-Define the analysis increments $u_k := x_{k \mid k} - x_{k \mid k-1}$ and $u_k^{(r)} := x_{k \mid k}^{(r)} - x_{k \mid k-1}$, so that $u_k - u_{k}^{(r)} = x_{k \mid k} - x_{k \mid k}^{(r)}$.
-Consider the functional
-\begin{equation*}
-    \Phi_k(u) = \frac{1}{2} \Vert y_k - H_k(x_{k \mid k-1} + u) \Vert_{R_{k}^{-1}}^{2} + \frac{1}{2} \Vert u \Vert_{\Sigma_{k \mid k-1}^{-1}}^{2}.
-\end{equation*}
-Then $u_k$ and $u_k^{(r)}$ are the minimizers of $\Phi_k(u)$ over $\mathbb{R}^n$ and $\mathcal{R}(P_r)$, respectively.
-In quadratic form, with $\Sigma_{k \mid k}^{-1} = (H_{k}^{\top} R_{k}^{-1} H_k + \Sigma_{k \mid k-1}^{-1})$
-\begin{equation*}
-    \Phi_k(u)=\frac{1}{2} u^\top \Sigma_{k\mid k}^{-1} u - b_k^\top u+ c,
-\end{equation*}
-with $b_k = H_k^\top R_k^{-1}(y_k - H_k x_{k\mid k-1})$, the minimizer satisfies $\Sigma_{k\mid k}^{-1} u_k = b_k$.
-Hence, for any $v$,
-\begin{equation*}
-    \Phi_k(v)-\Phi_k(u_k) = \frac{1}{2} (v-u_k)^\top \Sigma_{k\mid k}^{-1}(v-u_k),
-\end{equation*}
-which is minimized over $\mathcal{R}(P_r)$ at $u_{k}^{(r)}$, hence $u_{k}^{(r)}$ is the $\Sigma_{k\mid k}^{-1}$-orthogonal projection of $u_k$ onto $\mathcal{R}(P_r)$.
-Therefore,
-\begin{equation*}
-    \Vert u_k - u_{k}^{(r)} \Vert_{\Sigma_{k \mid k}^{-1}}^{2} = \Vert x_{k \mid k} - x_{k \mid k}^{(r)} \Vert_{\Sigma_{k \mid k}^{-1}}^2 \leq \Vert u_k - \Pi_r u_k \Vert_{\Sigma_{k \mid k}^{-1}}^{2}
-\end{equation*}
-With $C_k := \kappa(\Sigma_{k \mid k}^{-1})$,
-\begin{equation*}
-    \Vert x_{k \mid k} - x_{k \mid k}^{(r)} \Vert_{2}^{2} \leq C_k \Vert u_k - \Pi_r u_k \Vert_{2}^{2}.
-\end{equation*}
-Taking expectation yields
-\begin{equation*}
-    \mathbb{E} \Vert x_{k \mid k} - x_{k \mid k}^{(r)} \Vert_{2}^{2} \leq C_k \operatorname{tr}((I - \Pi_r) \operatorname{Cov}(u_k)).
-\end{equation*}
-Using the identity
-\begin{equation*}
-    \operatorname{Cov}(u_k) = \Sigma_{k \mid k-1}-\Sigma_{k \mid k} \preceq \Sigma_{k \mid k-1},
-\end{equation*}
-we obtain
-\begin{equation*}
-    \mathbb{E} \Vert x_{k \mid k} - x_{k \mid k}^{(r)} \Vert_{2}^{2} \leq C_k \operatorname{tr}((I - \Pi_r) \Sigma_{k \mid k-1})
-\end{equation*}
+\begin{proof}
+Fix the prediction state $x_{k \mid k-1} \in \mathbb{R}^d$ and covariance $\Sigma_{k \mid k-1}  \in \mathbb{R}^{d \times d}$.
+Let $\Pi_r$ denote the Euclidean orthogonal projector onto $\mathcal{R}(P_r)$.
 
-If $Q$ is positive definite, $\Sigma_{k \mid k-1} \preceq \beta_k Q$ with $\beta_k = \lambda_{\max}(Q^{-1/2} \Sigma_{k\mid k-1} Q^{-1/2})$.
-If, moreover, $P_r$ spans the $r$ leading eigenvectors of $Q$,
-\begin{equation*}
-    \operatorname{tr}((I - \Pi_r) \Sigma_{k \mid k-1}) \leq \beta_k \operatorname{tr}((I - \Pi_r) Q) = \beta_k \sum_{j > r} q_j.
-\end{equation*}
-Hence,
-\begin{equation*}
-    \mathbb{E} \Vert x_{k \mid k} - x_{k \mid k}^{(r)} \Vert_{2}^{2} \leq C_k \beta_k \sum_{j > r} q_j.
-\end{equation*}
-Particularly, for two-dimensional Matérn covariance,
-\begin{equation*}
-    \mathbb{E} \Vert x_{k \mid k} - x_{k \mid k}^{(r)} \Vert_{2}^{2} \leq C_k \beta_k \sum_{j > r} q_j \lesssim C_k \beta_k r^{-\nu}.
-\end{equation*}
+Define the analysis increments
+\begin{equation}
+    u_k := x_{k \mid k} - x_{k \mid k-1}, \qquad
+    u_k^{(r)} := x_{k \mid k}^{(r)} - x_{k \mid k-1}.
+\end{equation}
+In the increment variable, the full and reduced Kalman updates minimize
+\begin{equation}
+    \Phi_k(u)
+    = \frac{1}{2} \Vert y_k - H_k(x_{k \mid k-1} + u) \Vert_{R_{k}}^{2}
+    + \frac{1}{2} \Vert u \Vert_{\Sigma_{k \mid k-1}}^{2}.
+\end{equation}
+For the full filter, $\Phi_k$ is the quadratic objective associated with
+the filtering posterior~\eqref{eq:filterposterior}.
+For the reduced increments $u = P_r \alpha$, the same objective gives the corresponding
+reduced quadratic in~\eqref{eq:reducedfilterposterior}.
+Therefore, $u_k$ and $u_{k}^{(r)}$ are the minimizers of $\Phi_k$ over
+$\mathbb{R}^d$ and $\mathcal{R}(P_r)$, respectively.
 
-The bound shows that the approximation error decays at the same rate as the spectral tail of $Q$, which for two-dimensional Matérn covariance is of order $r^{-\nu}$.
-However, the constants $C_k = \kappa(\Sigma_{k \mid k}^{-1})$, and $\beta_k = \lambda_{\max}(Q^{-1/2} \Sigma_{k\mid k-1} Q^{-1/2})$ are not controlled a priori.
-In the reduced filter, $\beta_k$ is governed by the spectrum of $Q^{-1/2} \Sigma_{k \mid k-1})^{\top} Q^{-1/2})$ and therefore, is dependent of how $M_k$ shuffles the spectrum of the covariance.
+Define
+\begin{equation}
+    b_k := H_k^\top R_k^{-1}(y_k - H_k x_{k\mid k-1}).
+\end{equation}
+The full Kalman posterior precision is
+\begin{equation}
+\Sigma_{k \mid k}^{-1} = H_{k}^{\top} R_{k}^{-1} H_k + \Sigma_{k \mid k-1}^{-1}.
+\end{equation}
+Expanding $\Phi_k(u)$ then gives
+\begin{equation}
+    \Phi_k(u)=\frac{1}{2} u^\top \Sigma_{k\mid k}^{-1} u - b_k^\top u + \mathrm{const.}
+\end{equation}
+Because $\Sigma_{k\mid k}^{-1}$ is positive definite, this quadratic is strictly convex.
+Its first-order conditions over $\mathbb{R}^d$ and $\mathcal{R}(P_r)$ give
+\begin{equation}\label{eq:projector}
+    u_k = \Sigma_{k\mid k} b_k, \qquad u_{k}^{(r)} = \mathcal{P}_{k,r} u_k,
+\end{equation}
+where
+\begin{equation}
+    \mathcal{P}_{k,r} := P_r
+    (P_{r}^{\top} \Sigma_{k\mid k}^{-1} P_r)^{-1}
+    P_{r}^{\top} \Sigma_{k\mid k}^{-1}
+\end{equation}
+is the $\Sigma_{k\mid k}^{-1}$-orthogonal projector onto $\mathcal{R}(P_r)$.
+Then for any $v \in \mathbb{R}^d$,
+\begin{equation}
+    \Vert v - \mathcal{P}_{k,r}v \Vert_{\Sigma_{k \mid k}}^{2}
+    \leq \Vert v - \Pi_r v \Vert_{\Sigma_{k \mid k}}^{2},
+\end{equation}
+and by the Rayleigh quotient bounds,
+\begin{equation}
+    \Vert v - \mathcal{P}_{k,r}v \Vert_{2}^{2}
+    \leq C_k \Vert v - \Pi_r v \Vert_{2}^{2}.
+\end{equation}
+Moreover, for any centered random vector $V$,
+\begin{equation}\label{eq:expbound}
+    \mathbb{E}\Vert V - \mathcal{P}_{k,r}V \Vert_{2}^{2}
+    \leq C_k \operatorname{tr}((I - \Pi_r)\operatorname{Cov}(V)).
+\end{equation}
+We now apply~\eqref{eq:expbound} twice to get estimates for the mean and covariance.
 
-Therefore, the bound should be interpreted as a theoretical justification for convergence but is not expected to be sharp in practice.
+Conditionally on $(y_{1:k-1})$, the filter innovation has zero mean, and hence so does $u_k$.
+Together with~\eqref{eq:projector}, we get
+\begin{equation}
+    \mathbb{E} \Vert u_k - \mathcal{P}_{k,r}(u_k) \Vert_{2}^{2}
+    = \mathbb{E} \Vert x_{k \mid k} - x_{k \mid k}^{(r)} \Vert_{2}^{2}
+    \leq C_k \operatorname{tr}((I - \Pi_r) \operatorname{Cov}(u_k))
+\end{equation}
+For the Kalman update, the analysis increment covariance satisfies, in the Loewner order,
+\begin{equation}
+    \operatorname{Cov}(u_k) = \Sigma_{k \mid k-1}-\Sigma_{k \mid k} \preceq \Sigma_{k \mid k-1}.
+\end{equation}
+Thus,
+\begin{equation}
+    C_k \operatorname{tr}((I - \Pi_r) \operatorname{Cov}(u_k))
+    \leq C_k \operatorname{tr}((I - \Pi_r) \Sigma_{k \mid k-1}).\label{eq:trbound1}
+\end{equation}
+
+For the covariance, let $V_k \sim \mathcal{N}(0, \Sigma_{k\mid k})$.
+Observe that
+\begin{equation}
+    \operatorname{Cov}(V_k - \mathcal{P}_{k,r}V_k)
+    = (I - \mathcal{P}_{k,r}) \Sigma_{k\mid k} (I - \mathcal{P}_{k,r})^{\top}
+    = \Sigma_{k\mid k} - \Sigma_{k\mid k}^{(r)} \succeq 0,
+\end{equation}
+where the second equality follows by direct expansion using definitions of $\mathcal{P}_{k,r}$ and $\Sigma_{k\mid k}^{(r)}$.
+So by applying~\eqref{eq:expbound},
+\begin{align}
+    \Vert \Sigma_{k\mid k} - \Sigma_{k\mid k}^{(r)} \Vert_{*} &= \operatorname{tr}(\Sigma_{k\mid k} - \Sigma_{k\mid k}^{(r)})\\
+                                                              &= \mathbb{E}\Vert V_k - \mathcal{P}_{k,r}V_k \Vert_{2}^{2}\\
+                                                              &\leq C_k \operatorname{tr}((I - \Pi_r)\Sigma_{k\mid k})
+                                                              \leq  C_k \operatorname{tr}((I - \Pi_r)\Sigma_{k\mid k-1}), \label{eq:trbound2}
+\end{align}
+we obtain the same bound.
+
+By the definition of $\beta_k$, $\Sigma_{k\mid k-1} \preceq \beta_k Q_k$, and thus
+\begin{equation}
+    C_k \operatorname{tr}((I - \Pi_r)\Sigma_{k\mid k-1})
+    \leq C_k \beta_k \operatorname{tr}((I - \Pi_r) Q_k)
+    = C_k \beta_k \sum_{j>r} q_{k,j}.
+\end{equation}
+Combining this spectral tail with~\eqref{eq:trbound1} and~\eqref{eq:trbound2} proves both one-step bounds.
+
+By Weyl's asymptotic law~\cite[Chap. I, Sec. 3]{chavel} and the spectral representation
+of the Matérn-Whittle SPDE~\eqref{eq:maternspde}, the ordered Matérn covariance  eigenvalues in two spatial dimensions satisfy
+\begin{equation}
+    q_{k,j} \asymp j^{-(\nu+1)}.
+\end{equation}
+Consequently,
+\begin{equation}
+    C_k \beta_k \sum_{j>r} q_{k,j} \leq  C_k \beta_k \gamma_k r^{-\nu}.
+\end{equation}
+\end{proof}
+
+The bound shows that the reduced basis approximation error inherits the spectral tail of the model error covariance.
+For the two-dimensional Matérn covariance used here, this gives the expected squared error bound of order $r^{-\nu}$.
+The constants $C_k$ and $\beta_k$ depend on the conditioning of the filtering posterior and the relation between the prediction covariance and model error covariance, so the bound is intended as convergence rather than a sharp practical error estimate.
+\paragraph{Error propagation}
+Denote the mean and covariance approximation errors at time $k$ by
+\begin{equation}
+    e_k := x_{k \mid k} - x_{k \mid k}^{(r)}, \qquad E_k := \Sigma_{k\mid k} - \Sigma_{k\mid k}^{(r)}.
+\end{equation}
+We assume a common initializatin for both the full and reduced filters, thus $e_0=0$ and $E_0 = 0$.
+Then denote by $\tilde{\Sigma}_{k\mid k}$ the full Kalman covariance update at time $k$ from a reduced prior $\Sigma_{k\mid k-1}^{(r)}$, so that the local covariance error introduced from the reduced update at time $k$ is
+\begin{equation}
+    D_{k} := \widetilde{\Sigma}_{k\mid k} - \Sigma_{k\mid k}^{(r)} \succeq 0.
+\end{equation}
+In the same fashion we denote the gains associated with different covariances by
+\begin{equation}
+    K_k := \Sigma_{k\mid k} H_{k}^{\top} R_{k}^{-1}, \qquad
+    \widetilde{K}_k := \widetilde{\Sigma}_{k\mid k} H_{k}^{\top} R_{k}^{-1}, \qquad
+    K_{k}^{(r)} := \Sigma_{k\mid k}^{(r)}  H_{k}^{\top} R_{k}^{-1}.
+\end{equation}
+
+Now we may introduce recursion formulas for the filter errors.
+\begin{lemma}[Filter error recursions]\label{lem:recursions}
+    The mean and covariance errors at time $k$ satisfy
+    \begin{align}
+        e_k &= (I-K_{k}^{(r)} H_k)M_k e_{k-1} + E_k H_{k}^{\top} R_{k}^{-1} (y-H_k x_{k \mid k-1}),\\
+        E_k &= (I-K_k H_k)M_k E_{k-1} M_{k}^{\top}(I-\widetilde{K}_k H_k)^{\top} + D_{k}.
+    \end{align}
+\end{lemma}
+\begin{proof}
+We obtain the mean by direct substitution
+\begin{align}
+    e_k &= x_{k \mid k} - x_{k \mid k}^{(r)}\\
+        &= M_k x_{k-1 \mid k-1} + K_k (y-H_k x_{k \mid k-1}) - K_{k}^{(r)} (y - H_k x_{k \mid k-1}^{(r)})\\
+        &= (I- K_{k}^{(r)} H_k)M_k e_{k-1} + E_k H_{k}^{\top} R_{k}^{-1} y_k - E_k(H_{k}^{\top} R_{k}^{-1} H_{k} x_{k \mid k-1})\\
+        &= (I-K_{k}^{(r)} H_k)M_k e_{k-1} + E_k H_{k}^{\top} R_{k}^{-1} (y-H_k x_{k \mid k-1}).
+\end{align}
+For the covariance, we observe first that for the prior error
+\begin{equation}
+    \Sigma_{k\mid k-1} - \Sigma_{k\mid k-1}^{(r)} = M_k E_{k-1} M_{k}^{\top},
+\end{equation}
+then again by direct substitution
+\begin{align}
+    E_k &= \Sigma_{k\mid k} - \widetilde{\Sigma}_{k\mid k} + D_{k}\\
+        &= (I - K_k H_k) \Sigma_{k\mid k-1} - (I - \widetilde{K}_k H_k) \Sigma_{k\mid k-1}^{(r)} + D_k \\
+        &= (I - K_k H_k) M_k E_{k-1} M_{k}^{\top} (I-\widetilde{K}_k H_k)^{\top} + D_k.
+\end{align}
+\end{proof}
+For iterating the error recursions, for $0 \leq j<k$, define
+\begin{align}
+    \mathcal{F}_{k:j} &:= ((I-K_{k} H_{k})M_k) \cdots ((I-K_{j} H_{j})M_j),\\
+    \widetilde{\mathcal{F}}_{k:j} &:= ((I-\widetilde K_{k} H_{k})M_k) \cdots ((I- \widetilde K_{j} H_{j})M_j),\\
+    \mathcal{F}_{k:j}^{(r)} &:= ((I-K_{k}^{(r)} H_{k})M_k) \cdots ((I-K_{j}^{(r)} H_{j})M_j). \label{eq:errorpropagators}
+\end{align}
+These error propagators allow us now to bound the approximation error for finite-time filter runs.
+\begin{theorem}[Forward propagation of the errors]\label{thm:fixed-time-error}
+    Fix $T < \infty$.
+    Then for every $0 \leq k \leq T$,
+    \begin{align}
+        \mathbb{E} \Vert e_k \Vert_{2}^{2} \leq &
+        \sum_{j=1}^{k} \Vert \mathcal{F}_{k:j}^{(r)} \Vert_{2}^{2}
+        \Vert E_j \Vert_{*}^{2}
+        \mathbb{E} \Vert b_k \Vert_{2}^{2}\\
+        \Vert E_k \Vert_* \leq &
+        \sum_{j=1}^{k} \Vert \mathcal{F}_{k:j} \Vert_2
+        \Vert D_j \Vert_*.
+        \Vert \widetilde{\mathcal{F}}_{k:j} \Vert_2
+    \end{align}
+\end{theorem}
+\begin{proof}
+    Unrolling the recursions of Lemma~\ref{lem:recursions} with the error propagation operators~\eqref{eq:errorpropagators} and
+    applying the Hölder inequality for Schatten norms yields
+    \begin{align}
+        \mathbb{E} \Vert e_k \Vert_{2}^{2}
+        &= \sum_{j=1}^{k} \mathbb{E} \left\lVert \mathcal{F}_{k:j}^{(r)} E_j b_j \right\rVert_{2}^{2}\\
+        &\leq \sum_{j=1}^{k}
+        \left\lVert \mathcal{F}_{k:j}^{(r)} E_j \right\rVert_{2}^{2}
+        \mathbb{E} \left\lVert b_j \right\rVert_{2}^{2}
+        \leq \sum_{j=1}^{k} \left\lVert \mathcal{F}_{k:j}^{(r)} \right\rVert_{2}^{2}
+        \Vert E_j \Vert_{*}^{2}
+        \mathbb{E} \Vert b_k \Vert_{2}^{2},
+    \end{align}
+    and
+    \begin{align}
+        \Vert E_k \Vert_*
+        &= \sum_{j=1}^{k} \left\lVert \mathcal{F}_{k:j} D_j \widetilde{\mathcal{F}}_{k:j} \right\rVert_{*}\\
+        &\leq \sum_{j=1}^{k} \left\lVert \mathcal{F}_{k:j} \right\rVert_2
+        \Vert D_j \Vert_*.
+        \left\lVert \widetilde{\mathcal{F}}_{k:j} \right\rVert_2.
+    \end{align}
+\end{proof}
+Suppose now that the eigenvectors of $Q_j$ remain unchanged throughtout the filtering interval,
+like, e.g., in the Matérn case, and that $P_r$ spans its leading eigenvectors.
+Then by choosing the worst approximated time index
+\begin{equation}
+    m_r = \operatorname{arg\, max}_{1 \leq j \leq T}
+    \operatorname{tr}\left( (I-\Pi_r) Q_j \right),
+\end{equation}
+we would obtain the bounds of Proposition~\ref{prop:onestep} for the maximal errors
+\begin{equation}
+    \max_{1 \leq k \leq T} \mathbb{E} \Vert e_k \leq C_T \sum_{j > r} q_{m_r,j}
+    \qquad \max_{1 \leq k \leq T} \Vert E_k \Vert_* \leq C_T \sum_{j > r} q_{m_r,j},
+\end{equation}
+for $C_T < \infty$, independent of $r$, and thus also the same Matérn rates.
+The bound still depends on the filtering end time $T$.
+For the time-uniform result, we will require further assumptions.
+
+The first condition is a time-independent bound
+\begin{equation}
+    c_b := \sup_{j \geq  1} \mathbb{E} \Vert b_k \Vert_{2}^{2} < \infty.\label{eq:bbound}
+\end{equation}
+To discuss what that could mean, we can estimate it with full filter quantities.
+First, denote the full filter innovation covariance by
+\begin{equation}
+    S_j := H_j \Sigma_{j \vert j-1} H_{j}^{\top} + R_j.
+\end{equation}
+Then following the arguments of the proof of Proposition~\ref{prop:onestep},
+\begin{align}
+    \mathbb{E} \Vert b_k \Vert_{2}^{2}
+    &= \operatorname(tr) \left( H_{j}^{\top} R_{j}^{-1} S_j R_{j}^{-1} H_{j} \right)\\
+    &\leq \left\lVert \Sigma_{j \vert j}^{-1} \right\rVert_{2}^{2} \operatorname{tr}\left(\Sigma_{j \vert j-1}\right).
+\end{align}
+These quantities would translate into the maximum amplification by the posterior precision and the total prior variance.
+
+In addition, we require exponential stability of the error propagators.
+The parametrization of the posterior correction~\eqref{eq:posteriorparametrization} means that the complement of the reduced subspace is not corrected by the filter:
+\begin{equation}
+    (I-\Pi_r)(x_{k \mid k-1} + P_r \alpha_k) = (I-\Pi_r)(x_{k \mid k-1}).
+\end{equation}
+Therefore, the state model would need to contract the components of the state outside of $\mathcal{R}(P_r)$.
+
 \subsection{Dimension reduction RTS smoother}
 The fixed-interval Rauch-Tung-Striebel (RTS) smoother gives the algorithm to compute the state densities conditioned by both past and future observations
 \begin{equation}
